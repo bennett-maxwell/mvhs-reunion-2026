@@ -172,14 +172,11 @@
 <script>
 /* MVHS Reunion — single-photo intake. Capture stays full-fidelity under the hood
    (original bytes + hash preserved for the team); the UI just keeps it simple. */
-const BACKEND_URL = "";              // unused — submissions go via AgentMail API below
-const AGENTMAIL_KEY = "am_us_2ffccaab1a317387d6090c6ec4fbdd27816a9a8011c9af86991061ed570eebbc";
-const AGENTMAIL_INBOX = "aiteam@agentmail.to";
+const BACKEND_URL = "";              // same-origin Apps Script web app
 const REQUIRE_ACCESS_CODE = false;
 const ACCESS_CODE = "BRUINS2011";
 const MAX_FILES = 1;
 const MAX_BYTES = 60 * 1024 * 1024;
-const MAX_EMAIL_BYTES = 4 * 1024 * 1024; // resize before send to stay under SMTP limits
 
 async function resizeToBytes(file, maxBytes) {
   return new Promise((resolve) => {
@@ -289,52 +286,25 @@ async function submit(){
     consent:true, accessCode:REQUIRE_ACCESS_CODE?$("accessCode").value.trim():"",
     photos:selected.map(s=>({filename:s.file.name,type:s.file.type||"image",size:s.file.size,width:s.width,height:s.height,sha256:s.sha256,exifYear:s.exifYear})) };
   try{
-    // Resize photo to stay under SMTP attachment limits
-    const photoFile = selected[0].file;
-    let photoBytes = selected[0].bytes;
-    $("progressBar").style.width="20%";
-    if (photoBytes.byteLength > MAX_EMAIL_BYTES) {
-      const resized = await resizeToBytes(photoFile, MAX_EMAIL_BYTES);
-      if (resized) photoBytes = resized;
-    }
-    const photoB64 = bufToBase64(photoBytes);
-    $("progressBar").style.width="50%";
-    // Send via AgentMail API from aiteam@ inbox
-    const firstName = $("first").value.trim();
-    const lastName = $("last").value.trim();
-    const phone = $("phone").value.trim();
-    const emailVal = $("email").value.trim();
-    const submittedAt = new Date().toISOString();
-    const ext = photoFile.name.split(".").pop().toLowerCase() || "jpg";
-    const fname = `${firstName.replace(/\s+/g,"_")}_${lastName.replace(/\s+/g,"_")}_${Date.now()}.${ext}`;
-    const emailBody = [
-      "MVHS-PHOTO-SUBMISSION",
-      `Name: ${firstName} ${lastName}`,
-      `Phone: ${phone || "(not provided)"}`,
-      `Email: ${emailVal || "(not provided)"}`,
-      `Submitted: ${submittedAt}`,
-      `SHA256: ${selected[0].sha256}`,
-      `Original size: ${photoFile.size} bytes`,
-      `Dimensions: ${selected[0].width}x${selected[0].height}`,
-      "",
-      "PHOTO_B64_START",
-      photoB64,
-      "PHOTO_B64_END"
-    ].join("\n");
-    const inboxEnc = encodeURIComponent(AGENTMAIL_INBOX);
-    const sendResp = await fetch(`https://api.agentmail.to/v0/inboxes/${inboxEnc}/messages/send`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${AGENTMAIL_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: [AGENTMAIL_INBOX],
-        subject: `MVHS-PHOTO: ${firstName} ${lastName} | ${phone || emailVal || "no-contact"}`,
-        text: emailBody
-      })
+    if(!hasGAS) throw new Error("This upload page must be opened from the Apps Script /exec URL.");
+    payload.photos = selected.map(s=>({
+      filename:s.file.name,
+      type:s.file.type||"image",
+      size:s.file.size,
+      width:s.width,
+      height:s.height,
+      sha256:s.sha256,
+      exifYear:s.exifYear,
+      bytesBase64:bufToBase64(s.bytes)
+    }));
+    $("progressBar").style.width="45%";
+    const result = await new Promise((resolve,reject)=>{
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject)
+        .processUpload(payload);
     });
-    if (!sendResp.ok) {
-      const errText = await sendResp.text().catch(() => "");
-      throw new Error(`Send failed (${sendResp.status}): ${errText.slice(0,120)}`);
-    }
+    if(!result || !result.ok) throw new Error((result && result.error) || "Upload failed.");
     $("progressBar").style.width="100%"; showSuccess();
   }catch(e){ flashErr("Hmm, that didn't go through: "+e.message+". Your photo's still here — please try again."); busy=false; setBtns(false,"Send my photo"); $("progress").classList.remove("show"); }
 }
