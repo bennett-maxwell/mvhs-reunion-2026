@@ -1,0 +1,13 @@
+{
+  "name": "mvhs-reunion-2026",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "vercel dev",
+    "deploy": "vercel deploy --prod"
+  },
+  "dependencies": {
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {}
+}

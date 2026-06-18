@@ -172,7 +172,7 @@
 <script>
 /* MVHS Reunion — single-photo intake. Capture stays full-fidelity under the hood
    (original bytes + hash preserved for the team); the UI just keeps it simple. */
-const BACKEND_URL = "";              // same-origin Apps Script web app
+const BACKEND_URL = "https://mvhs-reunion-2026.vercel.app/api/upload";
 const REQUIRE_ACCESS_CODE = false;
 const ACCESS_CODE = "BRUINS2011";
 const MAX_FILES = 1;
@@ -286,7 +286,6 @@ async function submit(){
     consent:true, accessCode:REQUIRE_ACCESS_CODE?$("accessCode").value.trim():"",
     photos:selected.map(s=>({filename:s.file.name,type:s.file.type||"image",size:s.file.size,width:s.width,height:s.height,sha256:s.sha256,exifYear:s.exifYear})) };
   try{
-    if(!hasGAS) throw new Error("This upload page must be opened from the Apps Script /exec URL.");
     payload.photos = selected.map(s=>({
       filename:s.file.name,
       type:s.file.type||"image",
@@ -298,12 +297,22 @@ async function submit(){
       bytesBase64:bufToBase64(s.bytes)
     }));
     $("progressBar").style.width="45%";
-    const result = await new Promise((resolve,reject)=>{
-      google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(reject)
-        .processUpload(payload);
-    });
+    const result = hasGAS
+      ? await new Promise((resolve,reject)=>{
+          google.script.run
+            .withSuccessHandler(resolve)
+            .withFailureHandler(reject)
+            .processUpload(payload);
+        })
+      : await fetch(BACKEND_URL, {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify(payload)
+        }).then(async r=>{
+          const data=await r.json().catch(()=>({ok:false,error:"Upload service returned an unreadable response."}));
+          if(!r.ok && data && !data.error) data.error=`Upload service returned ${r.status}.`;
+          return data;
+        });
     if(!result || !result.ok) throw new Error((result && result.error) || "Upload failed.");
     $("progressBar").style.width="100%"; showSuccess();
   }catch(e){ flashErr("Hmm, that didn't go through: "+e.message+". Your photo's still here — please try again."); busy=false; setBtns(false,"Send my photo"); $("progress").classList.remove("show"); }
