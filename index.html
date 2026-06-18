@@ -173,6 +173,7 @@
 /* MVHS Reunion — single-photo intake. Capture stays full-fidelity under the hood
    (original bytes + hash preserved for the team); the UI just keeps it simple. */
 const BACKEND_URL = "https://mvhs-reunion-2026.vercel.app/api/upload";
+const SESSION_URL = "https://mvhs-reunion-2026.vercel.app/api/session";
 const REQUIRE_ACCESS_CODE = false;
 const ACCESS_CODE = "BRUINS2011";
 const MAX_FILES = 1;
@@ -274,6 +275,35 @@ function validate(){
   if(!$("consent").checked) return "Please check the box so we can include your photo.";
   return null;
 }
+async function uploadViaDriveSession(payload){
+  const metaPayload={...payload, photos:payload.photos.map(p=>({
+    filename:p.filename,type:p.type,size:p.size,width:p.width,height:p.height,sha256:p.sha256,exifYear:p.exifYear
+  }))};
+  const init=await fetch(SESSION_URL,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(metaPayload)
+  }).then(async r=>{
+    const data=await r.json().catch(()=>({ok:false,error:"Upload service returned an unreadable response."}));
+    if(!r.ok && data && !data.error) data.error=`Upload service returned ${r.status}.`;
+    return data;
+  });
+  if(!init || !init.ok) throw new Error((init && init.error) || "Upload session failed.");
+  const stored=[];
+  for(let i=0;i<init.sessions.length;i++){
+    const session=init.sessions[i], item=selected[i];
+    $("progressBar").style.width=`${50+Math.round((i/init.sessions.length)*40)}%`;
+    const put=await fetch(session.uploadUrl,{
+      method:"PUT",
+      headers:{"Content-Type":session.type||item.file.type||"application/octet-stream"},
+      body:item.bytes
+    });
+    const uploaded=await put.json().catch(()=>null);
+    if(!put.ok) throw new Error(`Google Drive rejected ${session.filename || item.file.name}.`);
+    stored.push({...uploaded, filename:session.filename, sha256:session.sha256, bytes:session.size});
+  }
+  return {ok:true,stored:stored.length,folder:init.folder,photos:stored};
+}
 async function submit(){
   if(busy) return;
   const err=validate();
@@ -304,15 +334,7 @@ async function submit(){
             .withFailureHandler(reject)
             .processUpload(payload);
         })
-      : await fetch(BACKEND_URL, {
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify(payload)
-        }).then(async r=>{
-          const data=await r.json().catch(()=>({ok:false,error:"Upload service returned an unreadable response."}));
-          if(!r.ok && data && !data.error) data.error=`Upload service returned ${r.status}.`;
-          return data;
-        });
+      : await uploadViaDriveSession(payload);
     if(!result || !result.ok) throw new Error((result && result.error) || "Upload failed.");
     $("progressBar").style.width="100%"; showSuccess();
   }catch(e){ flashErr("Hmm, that didn't go through: "+e.message+". Your photo's still here — please try again."); busy=false; setBtns(false,"Send my photo"); $("progress").classList.remove("show"); }
